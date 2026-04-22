@@ -73,7 +73,7 @@ services:
   # Unterstützt PDF, DOCX, HTML, RTF u.v.m.
   # ─────────────────────────────────────────────
   tika:
-    image: apache/tika:2.9.2-full
+    image: apache/tika:latest-full
     container_name: mnr-tika
     restart: unless-stopped
     ports:
@@ -83,6 +83,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
+
 
 volumes:
   postgres_data:
