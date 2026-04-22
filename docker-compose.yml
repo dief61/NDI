@@ -54,7 +54,7 @@ services:
   # ─────────────────────────────────────────────
   minio-init:
     image: minio/mc:latest
-    container_name: ndi-minio-init
+    container_name: mnr-minio-init
     restart: "no"
     depends_on:
       minio:
@@ -63,8 +63,8 @@ services:
       /bin/sh -c "
         mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
         mc mb --ignore-existing local/${MINIO_DEFAULT_BUCKET};
-        mc mb --ignore-existing local/ndi-dokumente;
-        mc mb --ignore-existing local/ndi-informationsmodelle;
+        mc mb --ignore-existing local/mnr-dokumente;
+        mc mb --ignore-existing local/mnr-informationsmodelle;
         echo 'MinIO Buckets bereit.';
       "
 
