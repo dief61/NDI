@@ -1,6 +1,6 @@
 # services/ingest/app/api/routes/ingest.py
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
@@ -13,65 +13,78 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Request / Response Schemas
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 class DocumentMetadata(BaseModel):
-    """Metadaten die beim Upload mitgegeben werden."""
-    source_type: str                        # gesetz | verordnung | standard | ...
-    title: str
-    jurisdiction: Optional[str] = None     # z.B. "BW"
-    valid_from: Optional[date] = None
-    valid_to: Optional[date] = None
-    norm_reference: Optional[str] = None   # z.B. "§ 1 MeldeG BW"
-    version: Optional[str] = None
-    language: str = "de"
+    source_type:    str = "gesetz"
+    title:          str = "Unbekanntes Dokument"
+    jurisdiction:   Optional[str] = None
+    valid_from:     Optional[date] = None
+    valid_to:       Optional[date] = None
+    norm_reference: Optional[str] = None
+    version:        Optional[str] = None
+    language:       str = "de"
     register_scope: Optional[list[str]] = None
 
 
 class IngestResponse(BaseModel):
-    job_id: str
-    doc_id: str
-    status: str
-    message: str
+    job_id:   str
+    doc_id:   str
+    status:   str
+    message:  str
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Erlaubte Dateiformate
+# ─────────────────────────────────────────────────────────────────────────────
+
+ALLOWED_CONTENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/html",
+    "text/plain",
+    "application/rtf",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Endpoints
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/document", response_model=IngestResponse)
 async def ingest_document(
+    request:          Request,
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    source_type: str = "gesetz",
-    title: str = "Unbekanntes Dokument",
-    jurisdiction: Optional[str] = None,
-    norm_reference: Optional[str] = None,
-    version: Optional[str] = None,
-    language: str = "de",
+    file:             UploadFile = File(...),
+    source_type:      str = "gesetz",
+    title:            str = "Unbekanntes Dokument",
+    jurisdiction:     Optional[str] = None,
+    norm_reference:   Optional[str] = None,
+    version:          Optional[str] = None,
+    language:         str = "de",
+    force_class:      Optional[str] = None,   # A | B | C
 ):
     """
     Dokument hochladen und Ingest-Pipeline starten.
 
-    Der eigentliche Ingest (Parsing, Chunking, Embedding) läuft
-    als Background-Task – der Endpoint antwortet sofort mit einer job_id.
+    Die Pipeline läuft als Background-Task.
+    Der Endpoint antwortet sofort mit job_id und doc_id.
+    Status abfragen: GET /api/v1/ingest/status/{job_id}
     """
-    # Dateiformat prüfen
-    allowed_types = {
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/msword",
-        "text/html",
-        "text/plain",
-        "application/rtf",
-    }
-    if file.content_type not in allowed_types:
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
-            detail=f"Dateiformat '{file.content_type}' wird nicht unterstützt. "
+            detail=f"Dateiformat '{file.content_type}' nicht unterstützt. "
                    f"Erlaubt: PDF, DOCX, DOC, HTML, TXT, RTF"
+        )
+
+    if force_class and force_class not in ("A", "B", "C"):
+        raise HTTPException(
+            status_code=422,
+            detail="force_class muss A, B oder C sein."
         )
 
     doc_id = str(uuid.uuid4())
@@ -86,20 +99,17 @@ async def ingest_document(
         language=language,
     )
 
-    # Dateiinhalt lesen (vor dem Background-Task, da Stream danach geschlossen)
+    # Dateiinhalt vor dem Background-Task lesen
     file_content = await file.read()
-    filename = file.filename
+    filename     = file.filename
 
-    logger.info(
-        "Ingest gestartet",
-        doc_id=doc_id,
-        job_id=job_id,
-        filename=filename,
-        source_type=source_type,
-    )
+    logger.info("Ingest-Request empfangen",
+                doc_id=doc_id, job_id=job_id,
+                filename=filename, source_type=source_type)
 
-    # Pipeline als Background-Task starten
-    service = IngestService()
+    # IngestService vom App-State holen (Singleton)
+    service: IngestService = request.app.state.ingest_service
+
     background_tasks.add_task(
         service.run_pipeline,
         doc_id=doc_id,
@@ -107,22 +117,75 @@ async def ingest_document(
         file_content=file_content,
         filename=filename,
         metadata=metadata,
+        doc_class_override=force_class,
     )
 
     return IngestResponse(
         job_id=job_id,
         doc_id=doc_id,
         status="queued",
-        message=f"Dokument '{filename}' wird verarbeitet. Status über /api/v1/ingest/status/{job_id} abrufbar.",
+        message=(
+            f"Dokument '{filename}' in die Pipeline eingereiht. "
+            f"Status: GET /api/v1/ingest/status/{job_id}"
+        ),
     )
 
 
 @router.get("/status/{job_id}")
-async def get_ingest_status(job_id: str):
-    """Verarbeitungsstatus eines Ingest-Jobs abfragen."""
-    # TODO: Status aus PostgreSQL-Job-Tabelle lesen (M1 Iteration 2)
-    return {
-        "job_id": job_id,
-        "status": "processing",
-        "message": "Job-Status-Tracking wird in M1 Iteration 2 implementiert.",
-    }
+async def get_ingest_status(job_id: str, request: Request):
+    """
+    Verarbeitungsstatus eines Ingest-Jobs abfragen.
+
+    Status-Werte:
+      queued    → in der Warteschlange
+      parsing   → Tika-Parsing läuft
+      chunking  → Chunking läuft
+      embedding → Embedding-Berechnung läuft
+      storing   → Speicherung in PostgreSQL
+      done      → erfolgreich abgeschlossen
+      error     → fehlgeschlagen (error_message enthält Details)
+    """
+    service: IngestService = request.app.state.ingest_service
+    status = await service.get_job_status(job_id)
+
+    if not status:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job '{job_id}' nicht gefunden."
+        )
+    return status
+
+
+@router.get("/jobs")
+async def list_recent_jobs(request: Request, limit: int = 20):
+    """
+    Letzte Ingest-Jobs auflisten (neueste zuerst).
+    """
+    service: IngestService = request.app.state.ingest_service
+    pool = await service._get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_id, doc_id, filename, status,
+                   doc_class, chunk_count, started_at, finished_at
+            FROM ingest_jobs
+            ORDER BY started_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    return [
+        {
+            "job_id":      row["job_id"],
+            "doc_id":      row["doc_id"],
+            "filename":    row["filename"],
+            "status":      row["status"],
+            "doc_class":   row["doc_class"],
+            "chunk_count": row["chunk_count"],
+            "started_at":  row["started_at"].isoformat() if row["started_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        }
+        for row in rows
+    ]
