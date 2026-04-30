@@ -1,0 +1,91 @@
+1. Statistik-Überblick (schnellster Einstieg)
+python nlp_worker.py --stats
+
+
+2. Detaillierte SQL-Abfragen direkt in PostgreSQL
+docker exec -it mnr-postgres psql -U mnr -d mnr_db
+
+Wie viele SVOs und NER wurden extrahiert?
+
+SELECT
+    (SELECT COUNT(*) FROM svo_extractions) AS svo_gesamt,
+    (SELECT COUNT(*) FROM ner_entities)    AS ner_gesamt;
+	
+SVO-Verteilung nach Normtyp:
+SELECT norm_type, COUNT(*) AS anzahl,
+       ROUND(AVG(confidence)::NUMERIC, 3) AS avg_konfidenz
+FROM svo_extractions
+GROUP BY norm_type
+ORDER BY anzahl DESC;
+
+Alle SVOs eines bestimmten Normtyps ansehen:
+SELECT subject, predicate, object, confidence, sentence_text
+FROM svo_extractions
+WHERE norm_type = 'MUST'
+  AND subject IS NOT NULL
+  AND object  IS NOT NULL
+ORDER BY confidence DESC
+LIMIT 20;
+
+NER-Entitäten nach Label:
+SELECT label, source, COUNT(*) AS anzahl
+FROM ner_entities
+GROUP BY label, source
+ORDER BY label, source;
+
+Alle erkannten Behörden (Flair-Ergebnisse):
+SELECT DISTINCT text, label_orig, confidence
+FROM ner_entities
+WHERE label = 'BEHÖRDE'
+  AND source = 'flair'
+ORDER BY confidence DESC
+LIMIT 20;
+
+
+Alle erkannten Gesetzes-Referenzen:
+SELECT DISTINCT text, label_orig, source, COUNT(*) AS häufigkeit
+FROM ner_entities
+WHERE label = 'GESETZ'
+GROUP BY text, label_orig, source
+ORDER BY häufigkeit DESC
+LIMIT 20;
+
+
+SVOs + zugehörige Chunks zusammen ansehen:
+SELECT
+    s.norm_type,
+    s.subject,
+    s.predicate,
+    s.object,
+    s.confidence,
+    nc.norm_reference,
+    s.sentence_text
+FROM svo_extractions s
+JOIN norm_chunks nc ON s.chunk_id = nc.id
+WHERE s.norm_type IN ('MUST','MUST_NOT')
+  AND s.confidence > 0.7
+ORDER BY nc.norm_reference, s.confidence DESC
+LIMIT 30;
+
+
+Qualitätsprüfung – SVOs ohne Objekt:
+SELECT norm_type, COUNT(*) AS anzahl
+FROM svo_extractions
+WHERE object IS NULL
+GROUP BY norm_type
+ORDER BY anzahl DESC;
+
+
+3. Export als CSV für Excel/Tabellenkalkulation
+docker exec -it mnr-postgres psql -U mnr -d mnr_db -c \
+  "\COPY (
+    SELECT s.norm_type, s.subject, s.predicate, s.object,
+           s.confidence, nc.norm_reference, s.sentence_text
+    FROM svo_extractions s
+    JOIN norm_chunks nc ON s.chunk_id = nc.id
+    WHERE s.subject IS NOT NULL
+    ORDER BY s.norm_type, s.confidence DESC
+  ) TO '/tmp/svo_export.csv' CSV HEADER"
+
+# Datei aus Container holen:
+docker cp mnr-postgres:/tmp/svo_export.csv ~/reg-mo/ndi/docs/svo_export.csv

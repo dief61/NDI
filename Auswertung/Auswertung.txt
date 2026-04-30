@@ -1,0 +1,12 @@
+Was du bei der Bewertung prüfen solltest
+	Frage	SQL	
+	Sind die Subjekte korrekte Akteure?				Top-Subjekte ansehen
+	Sind die Objekte sinnvolle Datenobjekte?		Top-Objekte ansehen
+	Stimmen die Normtypen?							MUST-SVOs stichprobenartig prüfen
+	Erkennt Flair die richtigen Behörden?			NER BEHÖRDE source=flair
+	Werden §-Referenzen korrekt erkannt?			NER GESETZ ansehen
+	Wie hoch ist die durchschnittliche Konfidenz?	AVG(confidence) je Normtyp
+
+
+Starte am besten mit python nlp_worker.py --stats für den Überblick und dann mit den SQL-Abfragen für Details. 
+Was möchtest du zuerst ansehen?

@@ -24,9 +24,11 @@ docling==2.5.0                 # Strukturerkennung (PDF, DOCX)
 sentence-transformers==3.0.1   # multilingual-e5-large
 torch==2.3.0                   # CPU-Only reicht für Entwicklung
 
-# NLP (M1-Vorbereitung; vollständige Nutzung ab M2)
-# spaCy 3.8.x unterstützt typer>=0.12.5 – kompatibel mit docling
+# NLP (M2)
+# typer + click explizit gepinnt wegen spaCy/docling Kompatibilität
 spacy>=3.8.4,<3.9.0
+typer>=0.12.5,<0.13.0
+click>=8.1.7,<8.2.0
 
 # Konfiguration & Utilities
 pydantic==2.7.1
@@ -34,6 +36,9 @@ pydantic-settings>=2.3.0       # >=2.3.0 wegen docling
 python-dotenv==1.0.1
 httpx==0.27.0                  # async HTTP (Tika-Aufrufe)
 tenacity==8.3.0                # Retry-Logik
+
+# NLP – Flair (M2 Legal NER)
+flair>=0.14.0
 
 # Logging & Observability
 structlog==24.2.0

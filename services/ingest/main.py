@@ -7,10 +7,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
-from app.api.routes import ingest, health, paket
+from app.api.routes import ingest, health, paket, nlp
 from app.core.config import settings
 from app.services.ingest_service import IngestService
 from app.services.paket_service import PaketService
+from app.services.nlp.nlp_service import NLPService
 
 logger = structlog.get_logger()
 
@@ -31,6 +32,10 @@ async def lifespan(app: FastAPI):
     paket_service = PaketService(ingest_service=ingest_service)
     app.state.paket_service = paket_service
 
+    # NLPService – M2 Post-Ingest NLP
+    nlp_service = NLPService()
+    app.state.nlp_service = nlp_service
+
     logger.info(
         "Services initialisiert",
         embedding_model=ingest_service.embedder.active_name,
@@ -42,6 +47,7 @@ async def lifespan(app: FastAPI):
     logger.info("NDI Ingest-Service wird beendet")
     await ingest_service.close()
     await paket_service.close()
+    await nlp_service.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,3 +75,4 @@ app.add_middleware(
 app.include_router(health.router, prefix="/health",        tags=["Health"])
 app.include_router(ingest.router, prefix="/api/v1/ingest", tags=["Ingest"])
 app.include_router(paket.router,  prefix="/api/v1/ingest", tags=["Paket"])
+app.include_router(nlp.router,    prefix="/api/v1/nlp",    tags=["NLP"])
